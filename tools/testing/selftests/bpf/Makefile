@@ -25,7 +25,7 @@ CFLAGS += -g -O0 -rdynamic -Wall -Werror $(GENFLAGS) $(SAN_CFLAGS)	\
 	  -I$(CURDIR) -I$(INCLUDE_DIR) -I$(GENDIR) -I$(LIBDIR)		\
 	  -I$(TOOLSINCDIR) -I$(APIDIR) -I$(OUTPUT)
 LDFLAGS += $(SAN_CFLAGS)
-LDLIBS += -lcap -lelf -lz -lrt -lpthread
+LDLIBS += -lcap -lelf -lz -lrt -lpthread $(CURDIR)/libblazesym.so
 
 # Silence some warnings when compiled with clang
 ifneq ($(LLVM),)
