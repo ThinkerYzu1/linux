@@ -19,6 +19,7 @@ char _license[] SEC("license") = "GPL";
 
 #define D_PATH_BUF_SIZE 1024
 char d_path_buf[D_PATH_BUF_SIZE] = {};
+__u32 pid = 0;
 
 SEC("iter/task_vma") int proc_maps(struct bpf_iter__task_vma *ctx)
 {
@@ -32,7 +33,7 @@ SEC("iter/task_vma") int proc_maps(struct bpf_iter__task_vma *ctx)
 		return 0;
 
 	file = vma->vm_file;
-	if (task->tgid != ctx->tgid) {
+	if (task->tgid != pid) {
 		BPF_SEQ_PRINTF(seq, "unexpected task (%d != %d)", task->tgid, ctx->tgid);
 		return 0;
 	}

@@ -1167,6 +1167,8 @@ static void test_task_vma(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_task_vma__open"))
 		return;
 
+	skel->bss->pid = getpid();
+
 	// VM load
 	err = bpf_iter_task_vma__load(skel);
 	if (!ASSERT_OK(err, "bpf_iter_task_vma__load"))

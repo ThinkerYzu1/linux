@@ -493,8 +493,6 @@ struct bpf_iter__task_vma {
 	__bpf_md_ptr(struct bpf_iter_meta *, meta);
 	__bpf_md_ptr(struct task_struct *, task);
 	__bpf_md_ptr(struct vm_area_struct *, vma);
-	u32 tgid __aligned(8);
-	u32 tid __aligned(8);
 };
 
 DEFINE_BPF_ITER_FUNC(task_vma, struct bpf_iter_meta *meta,
@@ -617,10 +615,6 @@ static struct bpf_iter_reg task_vma_reg_info = {
 		  PTR_TO_BTF_ID_OR_NULL },
 		{ offsetof(struct bpf_iter__task_vma, vma),
 		  PTR_TO_BTF_ID_OR_NULL },
-		{ offsetof(struct bpf_iter__task_vma, tgid),
-		  SCALAR_VALUE },
-		{ offsetof(struct bpf_iter__task_vma, tid),
-		  SCALAR_VALUE },
 	},
 	.seq_info		= &task_vma_seq_info,
 };
