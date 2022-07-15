@@ -106,7 +106,6 @@ static struct file *__anon_inode_getfile(const char *name,
 		ihold(inode);
 	}
 
-	// VMA iter create
 	file = alloc_file_pseudo(inode, anon_inode_mnt, name,
 				 flags & (O_ACCMODE | O_NONBLOCK), fops);
 	if (IS_ERR(file))
@@ -145,7 +144,6 @@ struct file *anon_inode_getfile(const char *name,
 				const struct file_operations *fops,
 				void *priv, int flags)
 {
-	// VMA iter create
 	return __anon_inode_getfile(name, fops, priv, flags, NULL, false);
 }
 EXPORT_SYMBOL_GPL(anon_inode_getfile);

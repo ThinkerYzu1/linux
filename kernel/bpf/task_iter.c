@@ -601,7 +601,6 @@ static struct bpf_iter_reg task_file_reg_info = {
 
 static const struct bpf_iter_seq_info task_vma_seq_info = {
 	.seq_ops		= &task_vma_seq_ops,
-	// VMA iter create
 	.init_seq_private	= init_seq_pidns,
 	.fini_seq_private	= fini_seq_pidns,
 	.seq_priv_size		= sizeof(struct bpf_iter_seq_task_vma_info),
@@ -708,7 +707,6 @@ static int __init task_iter_init(void)
 
 	task_vma_reg_info.ctx_arg_info[0].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_TASK];
 	task_vma_reg_info.ctx_arg_info[1].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_VMA];
-	// VMA boot
 	return bpf_iter_reg_target(&task_vma_reg_info);
 }
 late_initcall(task_iter_init);

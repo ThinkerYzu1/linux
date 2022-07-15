@@ -1739,7 +1739,7 @@ enum bpf_iter_feature {
 
 #define BPF_ITER_CTX_ARG_MAX 2
 struct bpf_iter_reg {
-	const char *target;	/* VMA boot - target name */
+	const char *target;
 	bpf_iter_attach_target_t attach_target;
 	bpf_iter_detach_target_t detach_target;
 	bpf_iter_show_fdinfo_t show_fdinfo;
