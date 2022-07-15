@@ -1714,6 +1714,11 @@ int bpf_obj_get_user(const char __user *pathname, int flags);
 
 struct bpf_iter_aux_info {
 	struct bpf_map *map;
+	union {
+		u32 tid;
+		u32 tgid;
+	} task;
+	u8 type;
 };
 
 typedef int (*bpf_iter_attach_target_t)(struct bpf_prog *prog,
@@ -1734,7 +1739,7 @@ enum bpf_iter_feature {
 
 #define BPF_ITER_CTX_ARG_MAX 2
 struct bpf_iter_reg {
-	const char *target;
+	const char *target;	/* VMA boot - target name */
 	bpf_iter_attach_target_t attach_target;
 	bpf_iter_detach_target_t detach_target;
 	bpf_iter_show_fdinfo_t show_fdinfo;

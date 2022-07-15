@@ -781,6 +781,7 @@ static void test_bpf_array_map(void)
 	linfo.map.map_fd = map_fd;
 	opts.link_info = &linfo;
 	opts.link_info_len = sizeof(linfo);
+	// array map
 	link = bpf_program__attach_iter(skel->progs.dump_bpf_array_map, &opts);
 	if (!ASSERT_OK_PTR(link, "attach_iter"))
 		goto out;
@@ -1156,7 +1157,9 @@ static void str_strip_first_line(char *str)
 
 static void test_task_vma(void)
 {
+	DECLARE_LIBBPF_OPTS(bpf_iter_attach_opts, opts);
 	int err, iter_fd = -1, proc_maps_fd = -1;
+	union bpf_iter_link_info linfo;
 	struct bpf_iter_task_vma *skel;
 	int len, read_size = 4;
 	char maps_path[64];
@@ -1165,20 +1168,27 @@ static void test_task_vma(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_task_vma__open"))
 		return;
 
-	skel->bss->pid = getpid();
-
+	// VM load
 	err = bpf_iter_task_vma__load(skel);
 	if (!ASSERT_OK(err, "bpf_iter_task_vma__load"))
 		goto out;
 
+	memset(&linfo, 0, sizeof(linfo));
+	// VMA init info
+	linfo.task.tgid = getpid();
+	linfo.task.type = BPF_ITER_TTYPE_TGID;
+	opts.link_info = &linfo;
+	opts.link_info_len = sizeof(linfo);
+	// VMA init info - START
 	skel->links.proc_maps = bpf_program__attach_iter(
-		skel->progs.proc_maps, NULL);
+		skel->progs.proc_maps, &opt);
 
 	if (!ASSERT_OK_PTR(skel->links.proc_maps, "bpf_program__attach_iter")) {
 		skel->links.proc_maps = NULL;
 		goto out;
 	}
 
+	// VMA iter create - START
 	iter_fd = bpf_iter_create(bpf_link__fd(skel->links.proc_maps));
 	if (!ASSERT_GE(iter_fd, 0, "create_iter"))
 		goto out;

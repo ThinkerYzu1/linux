@@ -366,7 +366,7 @@ static int bpf_mklink(struct dentry *dentry, umode_t mode, void *arg)
 
 	return bpf_mkobj_ops(dentry, mode, arg, &bpf_link_iops,
 			     bpf_link_is_iter(link) ?
-			     &bpf_iter_fops : &bpffs_obj_fops);
+			     &bpf_iter_fops /* xxx */ : &bpffs_obj_fops);
 }
 
 static struct dentry *
@@ -429,7 +429,7 @@ static int bpf_iter_link_pin_kernel(struct dentry *parent,
 		return PTR_ERR(dentry);
 	}
 	ret = bpf_mkobj_ops(dentry, mode, link, &bpf_link_iops,
-			    &bpf_iter_fops);
+			    &bpf_iter_fops /* xxx */);
 	dput(dentry);
 	inode_unlock(parent->d_inode);
 	return ret;

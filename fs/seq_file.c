@@ -64,9 +64,11 @@ int seq_open(struct file *file, const struct seq_operations *op)
 	if (!p)
 		return -ENOMEM;
 
+	// VMA iter create - set file::private_data to a seq_file just created.
 	file->private_data = p;
 
 	mutex_init(&p->lock);
+	// VMA iter create - set seq_file::op to a seq_operations passing from the args
 	p->op = op;
 
 	// No refcounting: the lifetime of 'p' is constrained
@@ -638,11 +640,13 @@ void *__seq_open_private(struct file *f, const struct seq_operations *ops,
 	if (private == NULL)
 		goto out;
 
+	// VMA iter create - set file::private_data
 	rc = seq_open(f, ops);
 	if (rc < 0)
 		goto out_free;
 
 	seq = f->private_data;
+	// VMA iter create - set seq_file::private
 	seq->private = private;
 	return private;
 

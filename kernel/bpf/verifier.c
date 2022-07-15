@@ -15090,6 +15090,7 @@ static int check_attach_btf_id(struct bpf_verifier_env *env)
 		prog->aux->attach_btf_trace = true;
 		return 0;
 	} else if (prog->expected_attach_type == BPF_TRACE_ITER) {
+		// VMA load - init bpf_iter_target_info::btf_id
 		if (!bpf_iter_prog_supported(prog))
 			return -EINVAL;
 		return 0;

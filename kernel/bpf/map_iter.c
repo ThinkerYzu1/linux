@@ -110,6 +110,7 @@ static int bpf_iter_attach_map(struct bpf_prog *prog,
 	if (!linfo->map.map_fd)
 		return -EBADF;
 
+	// Get map from bpf_iter_link_info passing from the userspace.
 	map = bpf_map_get_with_uref(linfo->map.map_fd);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -136,6 +137,7 @@ static int bpf_iter_attach_map(struct bpf_prog *prog,
 		goto put_map;
 	}
 
+	// Copy from bpf_iter_link_info  to bpf_iter_aux_info
 	aux->map = map;
 	return 0;
 
@@ -167,6 +169,7 @@ DEFINE_BPF_ITER_FUNC(bpf_map_elem, struct bpf_iter_meta *meta,
 
 static const struct bpf_iter_reg bpf_map_elem_reg_info = {
 	.target			= "bpf_map_elem",
+	// xxx - copy info from bpf_iter_link_info to bpf_iter_aux_info.
 	.attach_target		= bpf_iter_attach_map,
 	.detach_target		= bpf_iter_detach_map,
 	.show_fdinfo		= bpf_iter_map_show_fdinfo,

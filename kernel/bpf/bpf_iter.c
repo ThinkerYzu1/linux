@@ -10,7 +10,7 @@
 struct bpf_iter_target_info {
 	struct list_head list;
 	const struct bpf_iter_reg *reg_info;
-	u32 btf_id;	/* cached value */
+	u32 btf_id;	/* cached value */ /* a fast way to do comparison of target names */
 };
 
 struct bpf_iter_link {
@@ -90,6 +90,7 @@ static bool bpf_iter_support_resched(struct seq_file *seq)
 static ssize_t bpf_seq_read(struct file *file, char __user *buf, size_t size,
 			    loff_t *ppos)
 {
+	// VMA read - get file::private_data, casting to seq_file.
 	struct seq_file *seq = file->private_data;
 	size_t n, offs, copied = 0;
 	int err = 0, num_objs = 0;
@@ -121,6 +122,7 @@ static ssize_t bpf_seq_read(struct file *file, char __user *buf, size_t size,
 	}
 
 	seq->from = 0;
+	// VMA read - start reading
 	p = seq->op->start(seq, &seq->index);
 	if (!p)
 		goto stop;
@@ -241,6 +243,7 @@ __get_seq_info(struct bpf_iter_link *link)
 			return seq_info;
 	}
 
+	// VMA iter create - get bpf_iter_seq_info from bpf_iter_link::tinfo::reg_info
 	return link->tinfo->reg_info->seq_info;
 }
 
@@ -248,6 +251,7 @@ static int iter_open(struct inode *inode, struct file *file)
 {
 	struct bpf_iter_link *link = inode->i_private;
 
+	// Create private data
 	return prepare_seq_file(file, link, __get_seq_info(link));
 }
 
@@ -275,6 +279,7 @@ static int iter_release(struct inode *inode, struct file *file)
 const struct file_operations bpf_iter_fops = {
 	.open		= iter_open,
 	.llseek		= no_llseek,
+	// VMA read - START
 	.read		= bpf_seq_read,
 	.release	= iter_release,
 };
@@ -292,10 +297,12 @@ int bpf_iter_reg_target(const struct bpf_iter_reg *reg_info)
 	if (!tinfo)
 		return -ENOMEM;
 
+	// VMA boot = bpf_iter_target_info::reg_info is a bpf_iter_reg
 	tinfo->reg_info = reg_info;
 	INIT_LIST_HEAD(&tinfo->list);
 
 	mutex_lock(&targets_mutex);
+	// VMA boot - register bpf_iter_reg and create a bpf_iter_target_info
 	list_add(&tinfo->list, &targets);
 	mutex_unlock(&targets_mutex);
 
@@ -345,6 +352,7 @@ bool bpf_iter_prog_supported(struct bpf_prog *prog)
 			break;
 		}
 		if (!strcmp(attach_fname + prefix_len, iter->reg_info->target)) {
+			// VMA load - init a btf_id as a fast way doing comparison.
 			cache_btf_id(iter, prog);
 			tinfo = iter;
 			break;
@@ -517,6 +525,7 @@ int bpf_iter_link_attach(const union bpf_attr *attr, bpfptr_t uattr,
 		return -EINVAL;
 
 	if (!bpfptr_is_null(ulinfo)) {
+		// Copy bpf_iter_link_info from userspace
 		err = bpf_check_uarg_tail_zero(ulinfo, sizeof(linfo),
 					       linfo_len);
 		if (err)
@@ -528,6 +537,7 @@ int bpf_iter_link_attach(const union bpf_attr *attr, bpfptr_t uattr,
 
 	prog_btf_id = prog->aux->attach_btf_id;
 	mutex_lock(&targets_mutex);
+	// VM init info - find registered bpf_iter_target_info.
 	list_for_each_entry(iter, &targets, list) {
 		if (iter->btf_id == prog_btf_id) {
 			tinfo = iter;
@@ -543,6 +553,7 @@ int bpf_iter_link_attach(const union bpf_attr *attr, bpfptr_t uattr,
 		return -ENOMEM;
 
 	bpf_link_init(&link->link, BPF_LINK_TYPE_ITER, &bpf_iter_link_lops, prog);
+	// VMA init info - init bpf_iter_link::tinfo (bpf_iter_target_info)
 	link->tinfo = tinfo;
 
 	err = bpf_link_prime(&link->link, &link_primer);
@@ -552,6 +563,7 @@ int bpf_iter_link_attach(const union bpf_attr *attr, bpfptr_t uattr,
 	}
 
 	if (tinfo->reg_info->attach_target) {
+		// VMA init info - bpf_iter_reg::attach_target copy values from bpf_iter_target_info to bpf_iter_aux_info
 		err = tinfo->reg_info->attach_target(prog, &linfo, &link->aux);
 		if (err) {
 			bpf_link_cleanup(&link_primer);
@@ -592,8 +604,12 @@ static int prepare_seq_file(struct file *file, struct bpf_iter_link *link,
 
 	tinfo = link->tinfo;
 	total_priv_dsize = offsetof(struct bpf_iter_priv_data, target_private) +
-			   seq_info->seq_priv_size;
-	priv_data = __seq_open_private(file, seq_info->seq_ops,
+			   seq_info->seq_priv_size; /* seq_priv_size is defined in task_iter.c for ex. vm */
+	// private data including struct bpf_iter_seq_task_vma_info.  struct
+	// bpf_iter_seq_task_vma_info is placed immediately after struct
+	// bpf_iter_priv_data (bpf_iter_priv_data::target_private).
+	// VMA iter create - copy value to file::private_data
+	priv_data = __seq_open_private(file, seq_info->seq_ops /* assigned to seq_file::op. seq_info is from a bpf_link (part of bpf_iter_link) */,
 				       total_priv_dsize);
 	if (!priv_data) {
 		err = -ENOMEM;
@@ -601,6 +617,8 @@ static int prepare_seq_file(struct file *file, struct bpf_iter_link *link,
 	}
 
 	if (seq_info->init_seq_private) {
+		// VMA iter create - initialize private data copying from bpf_iter_aux_info to bpf_iter_seq_task_common.
+		// Cast bpf_iter_priv_data::target_private to bpf_iter_seq_task_common.
 		err = seq_info->init_seq_private(priv_data->target_private, &link->aux);
 		if (err)
 			goto release_seq_file;
@@ -608,6 +626,7 @@ static int prepare_seq_file(struct file *file, struct bpf_iter_link *link,
 
 	init_seq_meta(priv_data, tinfo, seq_info, prog);
 	seq = file->private_data;
+	// VMA iter create - set bpf_iter_seq_info::private to bpf_iter_priv_data::target_private
 	seq->private = priv_data->target_private;
 
 	return 0;
@@ -635,6 +654,7 @@ int bpf_iter_new_fd(struct bpf_link *link)
 	if (fd < 0)
 		return fd;
 
+	// VM iter create - create struct file with bpf_iter_fops
 	file = anon_inode_getfile("bpf_iter", &bpf_iter_fops, NULL, flags);
 	if (IS_ERR(file)) {
 		err = PTR_ERR(file);
@@ -642,7 +662,8 @@ int bpf_iter_new_fd(struct bpf_link *link)
 	}
 
 	iter_link = container_of(link, struct bpf_iter_link, link);
-	err = prepare_seq_file(file, iter_link, __get_seq_info(iter_link));
+	// VMA iter create - Create private data (bpf_iter_seq_info)
+	err = prepare_seq_file(file, iter_link, __get_seq_info(iter_link) /* xxx */);
 	if (err)
 		goto free_file;
 

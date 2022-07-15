@@ -2592,6 +2592,7 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr)
 		goto free_prog_sec;
 
 	/* run eBPF verifier */
+	// VMA load - init btf_id of bpf_iter_target_info.
 	err = bpf_check(&prog, attr, uattr);
 	if (err < 0)
 		goto free_used_maps;
@@ -4572,7 +4573,8 @@ static int link_create(union bpf_attr *attr, bpfptr_t uattr)
 		}
 		if (prog->expected_attach_type == BPF_TRACE_RAW_TP)
 			ret = bpf_raw_tp_link_attach(prog, NULL);
-		else if (prog->expected_attach_type == BPF_TRACE_ITER)
+		else if (prog->expected_attach_type == BPF_TRACE_ITER /* xxx */)
+			// VMA init info
 			ret = bpf_iter_link_attach(attr, uattr, prog);
 		else if (prog->expected_attach_type == BPF_LSM_CGROUP)
 			ret = cgroup_bpf_link_attach(attr, prog);
@@ -4829,6 +4831,7 @@ static int bpf_iter_create(union bpf_attr *attr)
 	if (IS_ERR(link))
 		return PTR_ERR(link);
 
+	// VMA iter create - create private data
 	err = bpf_iter_new_fd(link);
 	bpf_link_put(link);
 
@@ -5020,7 +5023,8 @@ static int __sys_bpf(int cmd, bpfptr_t uattr, unsigned int size)
 	case BPF_MAP_DELETE_BATCH:
 		err = bpf_map_do_batch(&attr, uattr.user, BPF_MAP_DELETE_BATCH);
 		break;
-	case BPF_LINK_CREATE:
+	case BPF_LINK_CREATE /* xxx */:
+		// VMA init info
 		err = link_create(&attr, uattr);
 		break;
 	case BPF_LINK_UPDATE:
@@ -5037,6 +5041,7 @@ static int __sys_bpf(int cmd, bpfptr_t uattr, unsigned int size)
 		err = bpf_enable_stats(&attr);
 		break;
 	case BPF_ITER_CREATE:
+		// VMA iter create - create private data
 		err = bpf_iter_create(&attr);
 		break;
 	case BPF_LINK_DETACH:

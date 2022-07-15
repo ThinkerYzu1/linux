@@ -80,6 +80,7 @@ static inline int sys_bpf_fd(enum bpf_cmd cmd, union bpf_attr *attr,
 {
 	int fd;
 
+	// VMA init info
 	fd = sys_bpf(cmd, attr, size);
 	return ensure_good_fd(fd);
 }
@@ -687,6 +688,7 @@ int bpf_link_create(int prog_fd, int target_fd,
 
 	switch (attach_type) {
 	case BPF_TRACE_ITER:
+		// VMA init info - copy from bpf_link_create_opts to bpf_attr::link_create::iter_info
 		attr.link_create.iter_info = ptr_to_u64(OPTS_GET(opts, iter_info, (void *)0));
 		attr.link_create.iter_info_len = iter_info_len;
 		break;
@@ -718,7 +720,8 @@ int bpf_link_create(int prog_fd, int target_fd,
 		break;
 	}
 proceed:
-	fd = sys_bpf_fd(BPF_LINK_CREATE, &attr, sizeof(attr));
+	// VMA init info
+	fd = sys_bpf_fd(BPF_LINK_CREATE /* xxx */, &attr, sizeof(attr));
 	if (fd >= 0)
 		return fd;
 	/* we'll get EINVAL if LINK_CREATE doesn't support attaching fentry

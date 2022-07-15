@@ -11125,6 +11125,7 @@ struct bpf_link *
 bpf_program__attach_iter(const struct bpf_program *prog,
 			 const struct bpf_iter_attach_opts *opts)
 {
+	// xxx
 	DECLARE_LIBBPF_OPTS(bpf_link_create_opts, link_create_opts);
 	char errmsg[STRERR_BUFSIZE];
 	struct bpf_link *link;
@@ -11134,6 +11135,7 @@ bpf_program__attach_iter(const struct bpf_program *prog,
 	if (!OPTS_VALID(opts, bpf_iter_attach_opts))
 		return libbpf_err_ptr(-EINVAL);
 
+	// VMA init info - Copy bpf_iter_attach_opts
 	link_create_opts.iter_info = OPTS_GET(opts, link_info, (void *)0);
 	link_create_opts.iter_info_len = OPTS_GET(opts, link_info_len, 0);
 
@@ -11148,7 +11150,8 @@ bpf_program__attach_iter(const struct bpf_program *prog,
 		return libbpf_err_ptr(-ENOMEM);
 	link->detach = &bpf_link__detach_fd;
 
-	link_fd = bpf_link_create(prog_fd, target_fd, BPF_TRACE_ITER,
+	// VMA init info
+	link_fd = bpf_link_create(prog_fd, target_fd, BPF_TRACE_ITER /* xxx */,
 				  &link_create_opts);
 	if (link_fd < 0) {
 		link_fd = -errno;

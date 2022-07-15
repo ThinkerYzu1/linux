@@ -12,6 +12,16 @@
 
 struct bpf_iter_seq_task_common {
 	struct pid_namespace *ns;
+	union {
+		u32 tgid;
+		u32 tid;
+	} task;
+	/*
+	 * BPF_ITER_TTYPE_ALL iterates over all tasks.
+	 * BPF_ITER_TTYPE_TGID iterates over all tasks within the task group of the given tgid.
+	 * BPF_ITER_TTYPE_TID is not a valid type.
+	 */
+	u8 type;		/* BPF_ITER_TTYPE_* */
 };
 
 struct bpf_iter_seq_task_info {
@@ -268,7 +278,10 @@ static int init_seq_pidns(void *priv_data, struct bpf_iter_aux_info *aux)
 {
 	struct bpf_iter_seq_task_common *common = priv_data;
 
+	// VMA iter create - Should set type and tgid in the private data.
 	common->ns = get_pid_ns(task_active_pid_ns(current));
+	common->type = aux->type;
+	memcpy(&common->task, &aux->task, sizeof(aux->task));
 	return 0;
 }
 
@@ -285,6 +298,7 @@ static const struct seq_operations task_file_seq_ops = {
 	.stop	= task_file_seq_stop,
 	.show	= task_file_seq_show,
 };
+
 
 struct bpf_iter_seq_task_vma_info {
 	/* The first field must be struct bpf_iter_seq_task_common.
@@ -371,7 +385,12 @@ task_vma_seq_get_next(struct bpf_iter_seq_task_vma_info *info)
 		}
 	} else {
 again:
-		curr_task = task_seq_get_next(ns, &curr_tid, true);
+		if (info->type == BPF_ITER_TTYPE_TGID) {
+			curr_task = get_pid_task(info->tgid, PIDTYPE_PID);
+			curr_tid = info->tgid;
+		} else {
+			curr_task = task_seq_get_next(ns, &curr_tid, true);
+		}
 		if (!curr_task) {
 			info->tid = curr_tid + 1;
 			goto finish;
@@ -391,8 +410,12 @@ again:
 			op = task_vma_iter_find_vma;
 		}
 
-		if (!curr_task->mm)
-			goto next_task;
+		if (!curr_task->mm) {
+			if (info->type == BPF_ITER_TTYPE_ALL)
+				goto next_task;
+			else
+				goto finish;
+		}
 
 		if (mmap_read_lock_killable(curr_task->mm))
 			goto finish;
@@ -423,7 +446,10 @@ again:
 	if (!curr_vma) {
 		/* case 3) above, or case 2) 4.1) with vma->next == NULL */
 		mmap_read_unlock(curr_task->mm);
-		goto next_task;
+		if (info->type == BPF_ITER_TTYPE_ALL)
+			goto next_task;
+		else
+			goto finish;
 	}
 	info->task = curr_task;
 	info->vma = curr_vma;
@@ -467,6 +493,8 @@ struct bpf_iter__task_vma {
 	__bpf_md_ptr(struct bpf_iter_meta *, meta);
 	__bpf_md_ptr(struct task_struct *, task);
 	__bpf_md_ptr(struct vm_area_struct *, vma);
+	u32 tgid __aligned(8);
+	u32 tid __aligned(8);
 };
 
 DEFINE_BPF_ITER_FUNC(task_vma, struct bpf_iter_meta *meta,
@@ -516,6 +544,15 @@ static void task_vma_seq_stop(struct seq_file *seq, void *v)
 		info->task = NULL;
 	}
 }
+static int bpf_iter_attach_task_vma(struct bpf_prog *prog,
+				    union bpf_iter_link_info *linfo,
+				    struct bpf_iter_aux_info *aux)
+{
+	// VMA init info
+	aux->type = linfo->type;
+	memcpy(&aux->task, &linfo->task, sizeof(linfo->task));
+	return 0;
+}
 
 static const struct seq_operations task_vma_seq_ops = {
 	.start	= task_vma_seq_start,
@@ -564,6 +601,7 @@ static struct bpf_iter_reg task_file_reg_info = {
 
 static const struct bpf_iter_seq_info task_vma_seq_info = {
 	.seq_ops		= &task_vma_seq_ops,
+	// VMA iter create
 	.init_seq_private	= init_seq_pidns,
 	.fini_seq_private	= fini_seq_pidns,
 	.seq_priv_size		= sizeof(struct bpf_iter_seq_task_vma_info),
@@ -571,13 +609,19 @@ static const struct bpf_iter_seq_info task_vma_seq_info = {
 
 static struct bpf_iter_reg task_vma_reg_info = {
 	.target			= "task_vma",
+	// VMA init info - attach_target for vma iterator
+	.attach_target		= bpf_iter_attach_task_vma,
 	.feature		= BPF_ITER_RESCHED,
-	.ctx_arg_info_size	= 2,
+	.ctx_arg_info_size	= 4,
 	.ctx_arg_info		= {
 		{ offsetof(struct bpf_iter__task_vma, task),
 		  PTR_TO_BTF_ID_OR_NULL },
 		{ offsetof(struct bpf_iter__task_vma, vma),
 		  PTR_TO_BTF_ID_OR_NULL },
+		{ offsetof(struct bpf_iter__task_vma, tgid),
+		  SCALAR_VALUE },
+		{ offsetof(struct bpf_iter__task_vma, tid),
+		  SCALAR_VALUE },
 	},
 	.seq_info		= &task_vma_seq_info,
 };
@@ -664,6 +708,7 @@ static int __init task_iter_init(void)
 
 	task_vma_reg_info.ctx_arg_info[0].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_TASK];
 	task_vma_reg_info.ctx_arg_info[1].btf_id = btf_tracing_ids[BTF_TRACING_TYPE_VMA];
+	// VMA boot
 	return bpf_iter_reg_target(&task_vma_reg_info);
 }
 late_initcall(task_iter_init);
