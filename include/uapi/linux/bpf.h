@@ -98,10 +98,10 @@ union bpf_iter_link_info {
 		__u32	map_fd;
 	} map;
 	struct {
-		__u8	type;	/* BPF_ITER_TTYPE_* */
 		union {
 			__u32	pid;
 			__u32	tgid;
+		__u8	type;	/* BPF_ITER_TTYPE_* */
 		};
 	} task;
 };
