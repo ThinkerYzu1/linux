@@ -34,7 +34,7 @@ SEC("iter/task_vma") int proc_maps(struct bpf_iter__task_vma *ctx)
 
 	file = vma->vm_file;
 	if (task->tgid != pid) {
-		BPF_SEQ_PRINTF(seq, "unexpected task (%d != %d)", task->tgid, ctx->tgid);
+		BPF_SEQ_PRINTF(seq, "unexpected task (%d != %d)", task->tgid, pid);
 		return 0;
 	}
 	perm_str[0] = (vma->vm_flags & VM_READ) ? 'r' : '-';

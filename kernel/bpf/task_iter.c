@@ -325,6 +325,7 @@ task_vma_seq_get_next(struct bpf_iter_seq_task_vma_info *info)
 	enum bpf_task_vma_iter_find_op op;
 	struct vm_area_struct *curr_vma;
 	struct task_struct *curr_task;
+	struct pid *pid;
 	u32 curr_tid = info->tid;
 
 	/* If this function returns a non-NULL vma, it holds a reference to
@@ -385,9 +386,10 @@ task_vma_seq_get_next(struct bpf_iter_seq_task_vma_info *info)
 		}
 	} else {
 again:
-		if (info->type == BPF_ITER_TTYPE_TGID) {
-			curr_task = get_pid_task(info->tgid, PIDTYPE_PID);
-			curr_tid = info->tgid;
+		if (info->common.type == BPF_ITER_TTYPE_TGID) {
+			pid = find_get_pid(info->common.task.tgid);
+			curr_task = get_pid_task(pid, PIDTYPE_PID);
+			curr_tid = info->common.task.tgid;
 		} else {
 			curr_task = task_seq_get_next(ns, &curr_tid, true);
 		}
@@ -411,7 +413,7 @@ again:
 		}
 
 		if (!curr_task->mm) {
-			if (info->type == BPF_ITER_TTYPE_ALL)
+			if (info->common.type == BPF_ITER_TTYPE_ALL)
 				goto next_task;
 			else
 				goto finish;
@@ -446,7 +448,7 @@ again:
 	if (!curr_vma) {
 		/* case 3) above, or case 2) 4.1) with vma->next == NULL */
 		mmap_read_unlock(curr_task->mm);
-		if (info->type == BPF_ITER_TTYPE_ALL)
+		if (info->common.type == BPF_ITER_TTYPE_ALL)
 			goto next_task;
 		else
 			goto finish;
@@ -547,8 +549,8 @@ static int bpf_iter_attach_task_vma(struct bpf_prog *prog,
 				    struct bpf_iter_aux_info *aux)
 {
 	// VMA init info
-	aux->type = linfo->type;
-	memcpy(&aux->task, &linfo->task, sizeof(linfo->task));
+	aux->type = linfo->task.type;
+	memcpy(&aux->task, &linfo->task.task, sizeof(linfo->task.task));
 	return 0;
 }
 
@@ -609,7 +611,7 @@ static struct bpf_iter_reg task_vma_reg_info = {
 	// VMA init info - attach_target for vma iterator
 	.attach_target		= bpf_iter_attach_task_vma,
 	.feature		= BPF_ITER_RESCHED,
-	.ctx_arg_info_size	= 4,
+	.ctx_arg_info_size	= 2,
 	.ctx_arg_info		= {
 		{ offsetof(struct bpf_iter__task_vma, task),
 		  PTR_TO_BTF_ID_OR_NULL },

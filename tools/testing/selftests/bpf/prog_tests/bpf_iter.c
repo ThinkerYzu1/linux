@@ -1176,13 +1176,13 @@ static void test_task_vma(void)
 
 	memset(&linfo, 0, sizeof(linfo));
 	// VMA init info
-	linfo.task.tgid = getpid();
+	linfo.task.task.tgid = getpid();
 	linfo.task.type = BPF_ITER_TTYPE_TGID;
 	opts.link_info = &linfo;
 	opts.link_info_len = sizeof(linfo);
 	// VMA init info - START
 	skel->links.proc_maps = bpf_program__attach_iter(
-		skel->progs.proc_maps, &opt);
+		skel->progs.proc_maps, &opts);
 
 	if (!ASSERT_OK_PTR(skel->links.proc_maps, "bpf_program__attach_iter")) {
 		skel->links.proc_maps = NULL;

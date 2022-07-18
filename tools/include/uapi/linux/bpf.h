@@ -87,10 +87,23 @@ struct bpf_cgroup_storage_key {
 	__u32	attach_type;		/* program attach type (enum bpf_attach_type) */
 };
 
+enum {
+	BPF_ITER_TTYPE_ALL,
+	BPF_ITER_TTYPE_PID,
+	BPF_ITER_TTYPE_TGID,
+};
+
 union bpf_iter_link_info {
 	struct {
 		__u32	map_fd;
 	} map;
+	struct {
+		__u8	type;	/* BPF_ITER_TTYPE_* */
+		union {
+			__u32	pid;
+			__u32	tgid;
+		} task;
+	} task;
 };
 
 /* BPF syscall commands, see bpf(2) man-page for more details. */
