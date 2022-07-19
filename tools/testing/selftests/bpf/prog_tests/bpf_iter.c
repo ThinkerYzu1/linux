@@ -42,13 +42,13 @@ static void test_btf_id_or_null(void)
 	}
 }
 
-static void do_dummy_read(struct bpf_program *prog)
+static void do_dummy_read(struct bpf_program *prog, struct bpf_iter_attach_opts *opts)
 {
 	struct bpf_link *link;
 	char buf[16] = {};
 	int iter_fd, len;
 
-	link = bpf_program__attach_iter(prog, NULL);
+	link = bpf_program__attach_iter(prog, opts);
 	if (!ASSERT_OK_PTR(link, "attach_iter"))
 		return;
 
@@ -91,7 +91,7 @@ static void test_ipv6_route(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_ipv6_route__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_ipv6_route);
+	do_dummy_read(skel->progs.dump_ipv6_route, NULL);
 
 	bpf_iter_ipv6_route__destroy(skel);
 }
@@ -104,7 +104,7 @@ static void test_netlink(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_netlink__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_netlink);
+	do_dummy_read(skel->progs.dump_netlink, NULL);
 
 	bpf_iter_netlink__destroy(skel);
 }
@@ -117,7 +117,7 @@ static void test_bpf_map(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_bpf_map__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_bpf_map);
+	do_dummy_read(skel->progs.dump_bpf_map, NULL);
 
 	bpf_iter_bpf_map__destroy(skel);
 }
@@ -130,7 +130,7 @@ static void test_task(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_task__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_task);
+	do_dummy_read(skel->progs.dump_task, NULL);
 
 	bpf_iter_task__destroy(skel);
 }
@@ -143,7 +143,7 @@ static void test_task_sleepable(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_task__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_task_sleepable);
+	do_dummy_read(skel->progs.dump_task_sleepable, NULL);
 
 	ASSERT_GT(skel->bss->num_expected_failure_copy_from_user_task, 0,
 		  "num_expected_failure_copy_from_user_task");
@@ -161,8 +161,8 @@ static void test_task_stack(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_task_stack__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_task_stack);
-	do_dummy_read(skel->progs.get_task_user_stacks);
+	do_dummy_read(skel->progs.dump_task_stack, NULL);
+	do_dummy_read(skel->progs.get_task_user_stacks, NULL);
 
 	bpf_iter_task_stack__destroy(skel);
 }
@@ -174,7 +174,9 @@ static void *do_nothing(void *arg)
 
 static void test_task_file(void)
 {
+	DECLARE_LIBBPF_OPTS(bpf_iter_attach_opts, opts);
 	struct bpf_iter_task_file *skel;
+	union bpf_iter_link_info linfo;
 	pthread_t thread_id;
 	void *ret;
 
@@ -188,13 +190,19 @@ static void test_task_file(void)
 		  "pthread_create"))
 		goto done;
 
-	do_dummy_read(skel->progs.dump_task_file);
+	linfo.task.task.tgid = getpid();
+	linfo.task.type = BPF_ITER_TTYPE_TGID;
+	opts.link_info = & linfo;
+	opts.link_info_len = sizeof(linfo);
+
+	do_dummy_read(skel->progs.dump_task_file, &opts);
 
 	if (!ASSERT_FALSE(pthread_join(thread_id, &ret) || ret != NULL,
 		  "pthread_join"))
 		goto done;
 
 	ASSERT_EQ(skel->bss->count, 0, "check_count");
+	ASSERT_EQ(skel->bss->tgid_count, 1, "check_tgid_cound");
 
 done:
 	bpf_iter_task_file__destroy(skel);
@@ -274,7 +282,7 @@ static void test_tcp4(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_tcp4__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_tcp4);
+	do_dummy_read(skel->progs.dump_tcp4, NULL);
 
 	bpf_iter_tcp4__destroy(skel);
 }
@@ -287,7 +295,7 @@ static void test_tcp6(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_tcp6__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_tcp6);
+	do_dummy_read(skel->progs.dump_tcp6, NULL);
 
 	bpf_iter_tcp6__destroy(skel);
 }
@@ -300,7 +308,7 @@ static void test_udp4(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_udp4__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_udp4);
+	do_dummy_read(skel->progs.dump_udp4, NULL);
 
 	bpf_iter_udp4__destroy(skel);
 }
@@ -313,7 +321,7 @@ static void test_udp6(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_udp6__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_udp6);
+	do_dummy_read(skel->progs.dump_udp6, NULL);
 
 	bpf_iter_udp6__destroy(skel);
 }
@@ -326,7 +334,7 @@ static void test_unix(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_unix__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_unix);
+	do_dummy_read(skel->progs.dump_unix, NULL);
 
 	bpf_iter_unix__destroy(skel);
 }
@@ -988,7 +996,7 @@ static void test_bpf_sk_storage_get(void)
 	if (!ASSERT_OK(err, "bpf_map_update_elem"))
 		goto close_socket;
 
-	do_dummy_read(skel->progs.fill_socket_owner);
+	do_dummy_read(skel->progs.fill_socket_owner, NULL);
 
 	err = bpf_map_lookup_elem(map_fd, &sock_fd, &val);
 	if (CHECK(err || val != getpid(), "bpf_map_lookup_elem",
@@ -996,7 +1004,7 @@ static void test_bpf_sk_storage_get(void)
 	    getpid(), val, err))
 		goto close_socket;
 
-	do_dummy_read(skel->progs.negate_socket_local_storage);
+	do_dummy_read(skel->progs.negate_socket_local_storage, NULL);
 
 	err = bpf_map_lookup_elem(map_fd, &sock_fd, &val);
 	CHECK(err || val != -getpid(), "bpf_map_lookup_elem",
@@ -1116,7 +1124,7 @@ static void test_link_iter(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_bpf_link__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_bpf_link);
+	do_dummy_read(skel->progs.dump_bpf_link, NULL);
 
 	bpf_iter_bpf_link__destroy(skel);
 }
@@ -1129,7 +1137,7 @@ static void test_ksym_iter(void)
 	if (!ASSERT_OK_PTR(skel, "bpf_iter_ksym__open_and_load"))
 		return;
 
-	do_dummy_read(skel->progs.dump_ksym);
+	do_dummy_read(skel->progs.dump_ksym, NULL);
 
 	bpf_iter_ksym__destroy(skel);
 }

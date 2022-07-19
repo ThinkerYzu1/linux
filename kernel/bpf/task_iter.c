@@ -150,6 +150,7 @@ task_file_seq_get_next(struct bpf_iter_seq_task_file_info *info)
 	struct pid_namespace *ns = info->common.ns;
 	u32 curr_tid = info->tid;
 	struct task_struct *curr_task;
+	struct pid *pid;
 	unsigned int curr_fd = info->fd;
 
 	/* If this function returns a non-NULL file object,
@@ -161,12 +162,26 @@ again:
 		curr_task = info->task;
 		curr_fd = info->fd;
 	} else {
-                curr_task = task_seq_get_next(ns, &curr_tid, true);
+		printk("common type: %d\n", info->common.type);
+		switch (info->common.type) {
+		case BPF_ITER_TTYPE_ALL:
+			curr_task = task_seq_get_next(ns, &curr_tid, true);
+			break;
+		case BPF_ITER_TTYPE_TGID:
+			pid = find_get_pid(info->common.task.tgid);
+			curr_task = get_pid_task(pid, PIDTYPE_PID);
+			curr_tid = info->common.task.tgid;
+			break;
+		default:
+			curr_task = NULL;
+			break;
+		}
                 if (!curr_task) {
                         info->task = NULL;
                         info->tid = curr_tid;
                         return NULL;
                 }
+		printk("curr_tid %d\n", curr_tid);
 
                 /* set info->task and info->tid */
 		info->task = curr_task;
@@ -196,6 +211,10 @@ again:
 	/* the current task is done, go to the next task */
 	rcu_read_unlock();
 	put_task_struct(curr_task);
+	if (info->common.type != BPF_ITER_TTYPE_ALL) {
+		info->task = NULL;
+		return NULL;
+	}
 	info->task = NULL;
 	info->fd = 0;
 	curr_tid = ++(info->tid);
@@ -290,6 +309,16 @@ static void fini_seq_pidns(void *priv_data)
 	struct bpf_iter_seq_task_common *common = priv_data;
 
 	put_pid_ns(common->ns);
+}
+
+static int bpf_iter_attach_task_file(struct bpf_prog *prog,
+				     union bpf_iter_link_info *linfo,
+				     struct bpf_iter_aux_info *aux)
+{
+	// VMA init info
+	aux->type = linfo->task.type;
+	memcpy(&aux->task, &linfo->task.task, sizeof(linfo->task.task));
+	return 0;
 }
 
 static const struct seq_operations task_file_seq_ops = {
@@ -544,6 +573,7 @@ static void task_vma_seq_stop(struct seq_file *seq, void *v)
 		info->task = NULL;
 	}
 }
+
 static int bpf_iter_attach_task_vma(struct bpf_prog *prog,
 				    union bpf_iter_link_info *linfo,
 				    struct bpf_iter_aux_info *aux)
@@ -588,6 +618,7 @@ static const struct bpf_iter_seq_info task_file_seq_info = {
 
 static struct bpf_iter_reg task_file_reg_info = {
 	.target			= "task_file",
+	.attach_target		= bpf_iter_attach_task_file,
 	.feature		= BPF_ITER_RESCHED,
 	.ctx_arg_info_size	= 2,
 	.ctx_arg_info		= {
