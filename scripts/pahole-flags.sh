@@ -17,7 +17,8 @@ if [ "${pahole_ver}" -ge "121" ]; then
 	extra_paholeopt="${extra_paholeopt} --btf_gen_floats"
 fi
 if [ "${pahole_ver}" -ge "122" ]; then
-	extra_paholeopt="${extra_paholeopt} -j"
+	extra_paholeopt="${extra_paholeopt}"
 fi
+#extra_paholeopt="${extra_paholeopt} -j"
 
 echo ${extra_paholeopt}

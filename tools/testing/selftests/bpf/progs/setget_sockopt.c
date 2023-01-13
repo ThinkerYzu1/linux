@@ -22,6 +22,8 @@ int nr_active;
 int nr_connect;
 int nr_binddev;
 int nr_socket_post_create;
+int nr_write;
+int nr_write_total;
 
 struct sockopt_test {
 	int opt;
@@ -389,6 +391,14 @@ int skops_sockopt(struct bpf_sock_ops *skops)
 		break;
 	}
 
+	return 1;
+}
+
+SEC("lsm_cgroup/socket_sock_rcv_skb")
+int BPF_PROG(socket_sock_rcv_skb, struct sock *sk, struct sk_buff *skb)
+{
+	nr_write += !bpf_test_sockopt(sk, sk);
+	nr_write_total += 1;
 	return 1;
 }
 
