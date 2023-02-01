@@ -1384,7 +1384,10 @@ struct bpf_link {
 	u32 id;
 	enum bpf_link_type type;
 	const struct bpf_link_ops *ops;
-	struct bpf_prog *prog;
+	union {
+		struct bpf_prog *prog;
+		struct bpf_map *map;
+	};
 	struct work_struct work;
 };
 

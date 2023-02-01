@@ -494,6 +494,11 @@ static int bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 	refcount_set(&kvalue->refcnt, 1);
 	bpf_map_inc(map);
 
+#if 1
+	err = 0;
+	smp_store_release(&kvalue->state, BPF_STRUCT_OPS_STATE_INUSE);
+	goto unlock;
+#else
 	set_memory_rox((long)st_map->image, 1);
 	err = st_ops->reg(kdata);
 	if (likely(!err)) {
@@ -513,6 +518,7 @@ static int bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 	set_memory_nx((long)st_map->image, 1);
 	set_memory_rw((long)st_map->image, 1);
 	bpf_map_put(map);
+#endif
 
 reset_unlock:
 	bpf_struct_ops_map_put_progs(st_map);
@@ -698,3 +704,87 @@ void bpf_struct_ops_put(const void *kdata)
 		call_rcu(&st_map->rcu, bpf_struct_ops_put_rcu);
 	}
 }
+
+static void bpf_struct_ops_map_link_release(struct bpf_link *link)
+{
+	printk("bpf_struct_ops_map_link_release\n");
+}
+
+static void bpf_struct_ops_map_link_dealloc(struct bpf_link *link)
+{
+	printk("bpf_struct_ops_map_link_dealloc\n");
+	if (link->map) {
+		/* XXXX: The value should be deleted by the user program in
+		 * the future. I will fix it later. */
+		bpf_struct_ops_map_delete_elem(link->map, NULL);
+
+		bpf_map_put(link->map);
+	}
+	kfree(link);
+}
+
+static void bpf_struct_ops_map_link_show_fdinfo(const struct bpf_link *link,
+					    struct seq_file *seq)
+{
+	seq_printf(seq, "map_id:\t%d\n",
+		  link->map->id);
+}
+
+static int bpf_struct_ops_map_link_fill_link_info(const struct bpf_link *link,
+					       struct bpf_link_info *info)
+{
+	info->struct_ops_map.map_id = link->map->id;
+	return 0;
+}
+
+static const struct bpf_link_ops bpf_struct_ops_map_lops = {
+	.release = bpf_struct_ops_map_link_release,
+	.dealloc = bpf_struct_ops_map_link_dealloc,
+	.show_fdinfo = bpf_struct_ops_map_link_show_fdinfo,
+	.fill_link_info = bpf_struct_ops_map_link_fill_link_info,
+};
+
+int link_create_struct_ops_map(union bpf_attr *attr, bpfptr_t uattr)
+{
+	struct bpf_struct_ops_map *st_map;
+	struct bpf_link_primer link_primer;
+	struct bpf_struct_ops_value *kvalue;
+	struct bpf_map *map;
+	struct bpf_link *link = NULL;
+	int err;
+
+	map = bpf_map_get(attr->link_create.prog_fd);
+	if (map->map_type != BPF_MAP_TYPE_STRUCT_OPS)
+		return -EINVAL;
+
+	link = kzalloc(sizeof(*link), GFP_USER);
+	if (!link) {
+		err = -ENOMEM;
+		goto err_out;
+	}
+	bpf_link_init(link, BPF_LINK_TYPE_STRUCT_OPS_MAP, &bpf_struct_ops_map_lops, NULL);
+	link->map = map;
+
+	st_map = (struct bpf_struct_ops_map*)map;
+	kvalue = (struct bpf_struct_ops_value *)&st_map->kvalue;
+
+	set_memory_rox((long)st_map->image, 1);
+	err = st_map->st_ops->reg(kvalue->data);
+	if (err) {
+		set_memory_nx((long)st_map->image, 1);
+		set_memory_rw((long)st_map->image, 1);
+		goto err_out;
+	}
+
+	err = bpf_link_prime(link, &link_primer);
+	if (err)
+		goto err_out;
+
+	return bpf_link_settle(&link_primer);
+
+err_out:
+	bpf_map_put(map);
+	kfree(link);
+	return err;
+}
+

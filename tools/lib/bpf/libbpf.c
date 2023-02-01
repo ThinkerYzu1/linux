@@ -116,6 +116,7 @@ static const char * const attach_type_name[] = {
 	[BPF_SK_REUSEPORT_SELECT_OR_MIGRATE]	= "sk_reuseport_select_or_migrate",
 	[BPF_PERF_EVENT]		= "perf_event",
 	[BPF_TRACE_KPROBE_MULTI]	= "trace_kprobe_multi",
+	[BPF_STRUCT_OPS_MAP]		= "struct_ops_map",
 };
 
 static const char * const link_type_name[] = {
@@ -129,6 +130,7 @@ static const char * const link_type_name[] = {
 	[BPF_LINK_TYPE_PERF_EVENT]		= "perf_event",
 	[BPF_LINK_TYPE_KPROBE_MULTI]		= "kprobe_multi",
 	[BPF_LINK_TYPE_STRUCT_OPS]		= "struct_ops",
+	[BPF_LINK_TYPE_STRUCT_OPS_MAP]		= "struct_ops_map",
 };
 
 static const char * const map_type_name[] = {
@@ -11468,10 +11470,15 @@ struct bpf_link *bpf_program__attach(const struct bpf_program *prog)
 
 static int bpf_link__detach_struct_ops(struct bpf_link *link)
 {
+#if 0
 	__u32 zero = 0;
 
 	if (bpf_map_delete_elem(link->fd, &zero))
 		return -errno;
+#else
+	printf("bpf_link__detach_struct_ops\n");
+	close(link->fd);
+#endif
 
 	return 0;
 }
@@ -11481,7 +11488,7 @@ struct bpf_link *bpf_map__attach_struct_ops(const struct bpf_map *map)
 	struct bpf_struct_ops *st_ops;
 	struct bpf_link *link;
 	__u32 i, zero = 0;
-	int err;
+	int err, fd;
 
 	if (!bpf_map__is_struct_ops(map) || map->fd == -1)
 		return libbpf_err_ptr(-EINVAL);
@@ -11511,8 +11518,15 @@ struct bpf_link *bpf_map__attach_struct_ops(const struct bpf_map *map)
 		return libbpf_err_ptr(err);
 	}
 
+	fd = bpf_link_create(map->fd, -1, BPF_STRUCT_OPS_MAP, NULL);
+	if (fd < 0) {
+		err = -errno;
+		free(link);
+		return libbpf_err_ptr(err);
+	}
+
 	link->detach = bpf_link__detach_struct_ops;
-	link->fd = map->fd;
+	link->fd = fd;
 
 	return link;
 }

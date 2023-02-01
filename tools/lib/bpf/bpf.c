@@ -670,7 +670,7 @@ int bpf_prog_detach2(int prog_fd, int target_fd, enum bpf_attach_type type)
 	return libbpf_err_errno(ret);
 }
 
-int bpf_link_create(int prog_fd, int target_fd,
+int bpf_link_create(int prog_map_fd, int target_fd,
 		    enum bpf_attach_type attach_type,
 		    const struct bpf_link_create_opts *opts)
 {
@@ -694,7 +694,7 @@ int bpf_link_create(int prog_fd, int target_fd,
 	}
 
 	memset(&attr, 0, attr_sz);
-	attr.link_create.prog_fd = prog_fd;
+	attr.link_create.prog_fd = prog_map_fd;
 	attr.link_create.target_fd = target_fd;
 	attr.link_create.attach_type = attach_type;
 	attr.link_create.flags = OPTS_GET(opts, flags, 0);
@@ -731,6 +731,8 @@ int bpf_link_create(int prog_fd, int target_fd,
 		if (!OPTS_ZEROED(opts, tracing))
 			return libbpf_err(-EINVAL);
 		break;
+	case BPF_STRUCT_OPS_MAP:
+		break;
 	default:
 		if (!OPTS_ZEROED(opts, flags))
 			return libbpf_err(-EINVAL);
@@ -765,7 +767,7 @@ proceed:
 	case BPF_TRACE_FENTRY:
 	case BPF_TRACE_FEXIT:
 	case BPF_MODIFY_RETURN:
-		return bpf_raw_tracepoint_open(NULL, prog_fd);
+		return bpf_raw_tracepoint_open(NULL, prog_map_fd);
 	default:
 		return libbpf_err(err);
 	}
