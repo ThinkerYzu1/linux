@@ -1396,6 +1396,11 @@ struct bpf_link {
 	struct work_struct work;
 };
 
+struct bpf_struct_ops_link {
+	struct bpf_link link;
+	struct bpf_map __rcu *map;
+};
+
 struct bpf_link_ops {
 	void (*release)(struct bpf_link *link);
 	void (*dealloc)(struct bpf_link *link);
@@ -1964,6 +1969,7 @@ int bpf_link_new_fd(struct bpf_link *link);
 struct file *bpf_link_new_file(struct bpf_link *link, int *reserved_fd);
 struct bpf_link *bpf_link_get_from_fd(u32 ufd);
 struct bpf_link *bpf_link_get_curr_or_next(u32 *id);
+int bpf_struct_ops_link_create(union bpf_attr *attr);
 
 int bpf_obj_pin_user(u32 ufd, const char __user *pathname);
 int bpf_obj_get_user(const char __user *pathname, int flags);
@@ -2306,6 +2312,11 @@ static inline void bpf_link_inc(struct bpf_link *link)
 
 static inline void bpf_link_put(struct bpf_link *link)
 {
+}
+
+static inline int bpf_struct_ops_link_create(union bpf_attr *attr)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline int bpf_obj_get_user(const char __user *pathname, int flags)

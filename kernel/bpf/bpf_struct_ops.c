@@ -14,6 +14,7 @@
 
 enum bpf_struct_ops_state {
 	BPF_STRUCT_OPS_STATE_INIT,
+	BPF_STRUCT_OPS_STATE_READY,
 	BPF_STRUCT_OPS_STATE_INUSE,
 	BPF_STRUCT_OPS_STATE_TOBEFREE,
 };
@@ -494,11 +495,19 @@ static int bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 		*(unsigned long *)(udata + moff) = prog->aux->id;
 	}
 
-	bpf_map_inc(map);
-
 	set_memory_rox((long)st_map->image, 1);
+	if (st_map->map.map_flags & BPF_F_LINK) {
+		/* Let bpf_link handle registration & unregistration.
+		 *
+		 * Pair with smp_load_acquire() during lookup_elem().
+		 */
+		smp_store_release(&kvalue->state, BPF_STRUCT_OPS_STATE_READY);
+		goto unlock;
+	}
+
 	err = st_ops->reg(kdata);
 	if (likely(!err)) {
+		bpf_map_inc(map);
 		/* Pair with smp_load_acquire() during lookup_elem().
 		 * It ensures the above udata updates (e.g. prog->aux->id)
 		 * can be seen once BPF_STRUCT_OPS_STATE_INUSE is set.
@@ -514,7 +523,6 @@ static int bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 	 */
 	set_memory_nx((long)st_map->image, 1);
 	set_memory_rw((long)st_map->image, 1);
-	bpf_map_put(map);
 
 reset_unlock:
 	bpf_struct_ops_map_put_progs(st_map);
@@ -532,10 +540,15 @@ static int bpf_struct_ops_map_delete_elem(struct bpf_map *map, void *key)
 	struct bpf_struct_ops_map *st_map;
 
 	st_map = (struct bpf_struct_ops_map *)map;
+	if (st_map->map.map_flags & BPF_F_LINK)
+		return -EOPNOTSUPP;
+
 	prev_state = cmpxchg(&st_map->kvalue.state,
 			     BPF_STRUCT_OPS_STATE_INUSE,
 			     BPF_STRUCT_OPS_STATE_TOBEFREE);
 	switch (prev_state) {
+	case BPF_STRUCT_OPS_STATE_READY:
+		return -EOPNOTSUPP;
 	case BPF_STRUCT_OPS_STATE_INUSE:
 		st_map->st_ops->unreg(&st_map->kvalue.data);
 		bpf_map_put(map);
@@ -618,7 +631,7 @@ static void bpf_struct_ops_map_free_rcu(struct bpf_map *map)
 static int bpf_struct_ops_map_alloc_check(union bpf_attr *attr)
 {
 	if (attr->key_size != sizeof(unsigned int) || attr->max_entries != 1 ||
-	    attr->map_flags || !attr->btf_vmlinux_value_type_id)
+	    (attr->map_flags & ~BPF_F_LINK) || !attr->btf_vmlinux_value_type_id)
 		return -EINVAL;
 	return 0;
 }
@@ -714,3 +727,100 @@ void bpf_struct_ops_put(const void *kdata)
 
 	bpf_map_put(&st_map->map);
 }
+
+static void bpf_struct_ops_map_link_dealloc(struct bpf_link *link)
+{
+	struct bpf_struct_ops_link *st_link;
+	struct bpf_struct_ops_map *st_map;
+
+	st_link = container_of(link, struct bpf_struct_ops_link, link);
+	if (st_link->map) {
+		st_map = (struct bpf_struct_ops_map *)st_link->map;
+		st_map->st_ops->unreg(&st_map->kvalue.data);
+		bpf_map_put(st_link->map);
+	}
+	kfree(st_link);
+}
+
+static void bpf_struct_ops_map_link_show_fdinfo(const struct bpf_link *link,
+					    struct seq_file *seq)
+{
+	struct bpf_struct_ops_link *st_link;
+	struct bpf_map *map;
+
+	st_link = container_of(link, struct bpf_struct_ops_link, link);
+	rcu_read_lock_trace();
+	map = rcu_dereference(st_link->map);
+	if (map)
+		seq_printf(seq, "map_id:\t%d\n", map->id);
+	rcu_read_unlock_trace();
+}
+
+static int bpf_struct_ops_map_link_fill_link_info(const struct bpf_link *link,
+					       struct bpf_link_info *info)
+{
+	struct bpf_struct_ops_link *st_link;
+	struct bpf_map *map;
+
+	st_link = container_of(link, struct bpf_struct_ops_link, link);
+	rcu_read_lock_trace();
+	map = rcu_dereference(st_link->map);
+	if (map)
+		info->struct_ops.map_id = map->id;
+	rcu_read_unlock_trace();
+	return 0;
+}
+
+static const struct bpf_link_ops bpf_struct_ops_map_lops = {
+	.dealloc = bpf_struct_ops_map_link_dealloc,
+	.show_fdinfo = bpf_struct_ops_map_link_show_fdinfo,
+	.fill_link_info = bpf_struct_ops_map_link_fill_link_info,
+};
+
+int bpf_struct_ops_link_create(union bpf_attr *attr)
+{
+	struct bpf_struct_ops_link *link = NULL;
+	struct bpf_link_primer link_primer;
+	struct bpf_struct_ops_map *st_map;
+	struct bpf_map *map;
+	int err;
+
+	map = bpf_map_get(attr->link_create.map_fd);
+	if (!map)
+		return -EINVAL;
+
+	st_map = (struct bpf_struct_ops_map *)map;
+
+	if (map->map_type != BPF_MAP_TYPE_STRUCT_OPS || !(map->map_flags & BPF_F_LINK) ||
+	    /* Pair with smp_store_release() during map_update */
+	    smp_load_acquire(&st_map->kvalue.state) != BPF_STRUCT_OPS_STATE_READY) {
+		err = -EINVAL;
+		goto err_out;
+	}
+
+	link = kzalloc(sizeof(*link), GFP_USER);
+	if (!link) {
+		err = -ENOMEM;
+		goto err_out;
+	}
+	bpf_link_init(&link->link, BPF_LINK_TYPE_STRUCT_OPS, &bpf_struct_ops_map_lops, NULL);
+	link->map = map;
+
+	err = bpf_link_prime(&link->link, &link_primer);
+	if (err)
+		goto err_out;
+
+	err = st_map->st_ops->reg(st_map->kvalue.data);
+	if (err) {
+		bpf_link_cleanup(&link_primer);
+		goto err_out;
+	}
+
+	return bpf_link_settle(&link_primer);
+
+err_out:
+	bpf_map_put(map);
+	kfree(link);
+	return err;
+}
+
