@@ -4655,6 +4655,30 @@ out:
 	return ret;
 }
 
+static int link_update_map(struct bpf_link *link, union bpf_attr *attr)
+{
+	struct bpf_map *new_map;
+	int ret = 0;
+
+	new_map = bpf_map_get(attr->link_update.new_map_fd);
+	if (IS_ERR(new_map))
+		return -EINVAL;
+
+	if (new_map->map_type != BPF_MAP_TYPE_STRUCT_OPS) {
+		ret = -EINVAL;
+		goto out_put_map;
+	}
+
+	if (link->ops->update_map)
+		ret = link->ops->update_map(link, new_map);
+	else
+		ret = -EINVAL;
+
+out_put_map:
+	bpf_map_put(new_map);
+	return ret;
+}
+
 #define BPF_LINK_UPDATE_LAST_FIELD link_update.old_prog_fd
 
 static int link_update(union bpf_attr *attr)
@@ -4667,13 +4691,24 @@ static int link_update(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_LINK_UPDATE))
 		return -EINVAL;
 
-	flags = attr->link_update.flags;
-	if (flags & ~BPF_F_REPLACE)
-		return -EINVAL;
-
 	link = bpf_link_get_from_fd(attr->link_update.link_fd);
 	if (IS_ERR(link))
 		return PTR_ERR(link);
+
+	flags = attr->link_update.flags;
+
+	if (link->ops->update_map) {
+		if (flags)	/* always replace the existing one */
+			ret = -EINVAL;
+		else
+			ret = link_update_map(link, attr);
+		goto out_put_link;
+	}
+
+	if (flags & ~BPF_F_REPLACE) {
+		ret = -EINVAL;
+		goto out_put_link;
+	}
 
 	new_prog = bpf_prog_get(attr->link_update.new_prog_fd);
 	if (IS_ERR(new_prog)) {

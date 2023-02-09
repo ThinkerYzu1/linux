@@ -771,10 +771,56 @@ static int bpf_struct_ops_map_link_fill_link_info(const struct bpf_link *link,
 	return 0;
 }
 
+static int bpf_struct_ops_map_link_update(struct bpf_link *link, struct bpf_map *new_map)
+{
+	struct bpf_struct_ops_value *kvalue;
+	struct bpf_struct_ops_map *st_map, *old_st_map;
+	struct bpf_struct_ops_link *st_link;
+	struct bpf_map *old_map;
+	int err = 0;
+
+	if (new_map->map_type != BPF_MAP_TYPE_STRUCT_OPS ||
+	    !(new_map->map_flags & BPF_F_LINK))
+		return -EINVAL;
+
+	mutex_lock(&update_mutex);
+
+	st_link = container_of(link, struct bpf_struct_ops_link, link);
+
+	/* The new and old struct_ops must be the same type. */
+	st_map = container_of(new_map, struct bpf_struct_ops_map, map);
+
+	old_map = st_link->map;
+	old_st_map = container_of(old_map, struct bpf_struct_ops_map, map);
+	if (st_map->st_ops != old_st_map->st_ops ||
+	    /* Pair with smp_store_release() during map_update */
+	    smp_load_acquire(&st_map->kvalue.state) != BPF_STRUCT_OPS_STATE_READY) {
+		err = -EINVAL;
+		goto err_out;
+	}
+
+	kvalue = &st_map->kvalue;
+
+	err = st_map->st_ops->update(kvalue->data, old_st_map->kvalue.data);
+	if (err)
+		goto err_out;
+
+	bpf_map_inc(new_map);
+	rcu_assign_pointer(st_link->map, new_map);
+
+	bpf_map_put(old_map);
+
+err_out:
+	mutex_unlock(&update_mutex);
+
+	return err;
+}
+
 static const struct bpf_link_ops bpf_struct_ops_map_lops = {
 	.dealloc = bpf_struct_ops_map_link_dealloc,
 	.show_fdinfo = bpf_struct_ops_map_link_show_fdinfo,
 	.fill_link_info = bpf_struct_ops_map_link_fill_link_info,
+	.update_map = bpf_struct_ops_map_link_update,
 };
 
 int bpf_struct_ops_link_create(union bpf_attr *attr)
