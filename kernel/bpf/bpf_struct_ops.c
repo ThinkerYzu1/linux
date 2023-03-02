@@ -58,6 +58,8 @@ struct bpf_struct_ops_map {
 	struct bpf_struct_ops_value kvalue;
 };
 
+static DEFINE_MUTEX(update_mutex);
+
 #define VALUE_PREFIX "bpf_struct_ops_"
 #define VALUE_PREFIX_LEN (sizeof(VALUE_PREFIX) - 1)
 
@@ -249,6 +251,7 @@ int bpf_struct_ops_map_sys_lookup_elem(struct bpf_map *map, void *key,
 	struct bpf_struct_ops_map *st_map = (struct bpf_struct_ops_map *)map;
 	struct bpf_struct_ops_value *uvalue, *kvalue;
 	enum bpf_struct_ops_state state;
+	s64 refcnt;
 
 	if (unlikely(*(u32 *)key != 0))
 		return -ENOENT;
@@ -261,13 +264,13 @@ int bpf_struct_ops_map_sys_lookup_elem(struct bpf_map *map, void *key,
 		return 0;
 	}
 
-	/* No lock is needed.  state and refcnt do not need
-	 * to be updated together under atomic context.
-	 */
 	uvalue = value;
 	memcpy(uvalue, st_map->uvalue, map->value_size);
 	uvalue->state = state;
-	refcount_set(&uvalue->refcnt, refcount_read(&kvalue->refcnt));
+
+	refcnt = atomic64_read(&map->refcnt) - atomic64_read(&map->usercnt);
+	refcount_set(&uvalue->refcnt,
+		     refcnt > 0 ? refcnt : 0);
 
 	return 0;
 }
@@ -491,7 +494,6 @@ static int bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 		*(unsigned long *)(udata + moff) = prog->aux->id;
 	}
 
-	refcount_set(&kvalue->refcnt, 1);
 	bpf_map_inc(map);
 
 	set_memory_rox((long)st_map->image, 1);
@@ -536,8 +538,7 @@ static int bpf_struct_ops_map_delete_elem(struct bpf_map *map, void *key)
 	switch (prev_state) {
 	case BPF_STRUCT_OPS_STATE_INUSE:
 		st_map->st_ops->unreg(&st_map->kvalue.data);
-		if (refcount_dec_and_test(&st_map->kvalue.refcnt))
-			bpf_map_put(map);
+		bpf_map_put(map);
 		return 0;
 	case BPF_STRUCT_OPS_STATE_TOBEFREE:
 		return -EINPROGRESS;
@@ -580,6 +581,38 @@ static void bpf_struct_ops_map_free(struct bpf_map *map)
 	bpf_jit_free_exec(st_map->image);
 	bpf_map_area_free(st_map->uvalue);
 	bpf_map_area_free(st_map);
+}
+
+static void bpf_struct_ops_map_free_wq(struct rcu_head *head)
+{
+	struct bpf_struct_ops_map *st_map;
+
+	st_map = container_of(head, struct bpf_struct_ops_map, rcu);
+
+	/* bpf_map_free_deferred should not be called in a RCU callback. */
+	INIT_WORK(&st_map->map.work, bpf_map_free_deferred);
+	queue_work(system_unbound_wq, &st_map->map.work);
+}
+
+static void bpf_struct_ops_map_free_rcu(struct bpf_map *map)
+{
+	struct bpf_struct_ops_map *st_map = (struct bpf_struct_ops_map *)map;
+
+	/* Wait for a grace period of RCU. Then, post the map_free
+	 * work to the system_unbound_wq workqueue to free resources.
+	 *
+	 * The struct_ops's function may switch to another struct_ops.
+	 *
+	 * For example, bpf_tcp_cc_x->init() may switch to
+	 * another tcp_cc_y by calling
+	 * setsockopt(TCP_CONGESTION, "tcp_cc_y").
+	 * During the switch,  bpf_struct_ops_put(tcp_cc_x) is called
+	 * and its refcount may reach 0 which then free its
+	 * trampoline image while tcp_cc_x is still running.
+	 *
+	 * Thus, a rcu grace period is needed here.
+	 */
+	call_rcu(&st_map->rcu, bpf_struct_ops_map_free_wq);
 }
 
 static int bpf_struct_ops_map_alloc_check(union bpf_attr *attr)
@@ -646,6 +679,7 @@ const struct bpf_map_ops bpf_struct_ops_map_ops = {
 	.map_alloc_check = bpf_struct_ops_map_alloc_check,
 	.map_alloc = bpf_struct_ops_map_alloc,
 	.map_free = bpf_struct_ops_map_free,
+	.map_free_rcu = bpf_struct_ops_map_free_rcu,
 	.map_get_next_key = bpf_struct_ops_map_get_next_key,
 	.map_lookup_elem = bpf_struct_ops_map_lookup_elem,
 	.map_delete_elem = bpf_struct_ops_map_delete_elem,
@@ -660,41 +694,23 @@ const struct bpf_map_ops bpf_struct_ops_map_ops = {
 bool bpf_struct_ops_get(const void *kdata)
 {
 	struct bpf_struct_ops_value *kvalue;
+	struct bpf_struct_ops_map *st_map;
+	struct bpf_map *map;
 
 	kvalue = container_of(kdata, struct bpf_struct_ops_value, data);
+	st_map = container_of(kvalue, struct bpf_struct_ops_map, kvalue);
 
-	return refcount_inc_not_zero(&kvalue->refcnt);
-}
-
-static void bpf_struct_ops_put_rcu(struct rcu_head *head)
-{
-	struct bpf_struct_ops_map *st_map;
-
-	st_map = container_of(head, struct bpf_struct_ops_map, rcu);
-	bpf_map_put(&st_map->map);
+	map = __bpf_map_inc_not_zero(&st_map->map, false);
+	return !IS_ERR(map);
 }
 
 void bpf_struct_ops_put(const void *kdata)
 {
 	struct bpf_struct_ops_value *kvalue;
+	struct bpf_struct_ops_map *st_map;
 
 	kvalue = container_of(kdata, struct bpf_struct_ops_value, data);
-	if (refcount_dec_and_test(&kvalue->refcnt)) {
-		struct bpf_struct_ops_map *st_map;
+	st_map = container_of(kvalue, struct bpf_struct_ops_map, kvalue);
 
-		st_map = container_of(kvalue, struct bpf_struct_ops_map,
-				      kvalue);
-		/* The struct_ops's function may switch to another struct_ops.
-		 *
-		 * For example, bpf_tcp_cc_x->init() may switch to
-		 * another tcp_cc_y by calling
-		 * setsockopt(TCP_CONGESTION, "tcp_cc_y").
-		 * During the switch,  bpf_struct_ops_put(tcp_cc_x) is called
-		 * and its map->refcnt may reach 0 which then free its
-		 * trampoline image while tcp_cc_x is still running.
-		 *
-		 * Thus, a rcu grace period is needed here.
-		 */
-		call_rcu(&st_map->rcu, bpf_struct_ops_put_rcu);
-	}
+	bpf_map_put(&st_map->map);
 }
